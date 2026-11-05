@@ -27,7 +27,16 @@ spexgram-api ──▶ keycloak-server, spexregister-api, mailpit/SMTP      (fgv
   `spexgram-media`: nginx, which checks the signed, expiring address (`media/default.conf.template`, nginx
   `secure_link`) and passes the request to Immich's matching endpoint with a read-only API key. It caches thumbnails and
   previews, passes byte ranges for videos, answers only `GET`, `HEAD` and `OPTIONS`, allows CORS only from
-  `https://WEB_HOST`, and leaves the signature out of its log.
+  `https://WEB_HOST`, and leaves the signature out of its log. It refuses to start with an empty signing key.
+- An address the API has handed out stays valid until it expires, four hours after it was signed, and a browser may keep
+  what it fetched for up to an hour more (`Cache-Control: private, max-age=3600`). Hiding an album or item, or a report
+  that hides one, therefore takes effect at once in the pages, but links already handed out can work for up to about five
+  hours. Rotating `API_MEDIA_SIGNING_KEY` cuts them all off at once.
+- Immich transcodes every video (the API sets its policy to `all`); its browser version carries none of the original's
+  metadata, such as the place and time it was filmed, and is what viewers play. Only viewers who may download originals
+  can be played a video Immich has not transcoded. Transcoding costs CPU at upload time.
+- Neither the edge proxy (no `log` directive in fgv-infra-deploy's `edge/Caddyfile`, so no access log) nor the web
+  logs media addresses; nginx's error log can show a request line when Immich fails.
 - Immich is pinned (`IMMICH_VERSION`) and on an internal network only. Its web interface is not exposed; admins reach it
   through an SSH tunnel, e.g. `ssh -L 2283:<immich-server's address on the immich network>:2283 host`.
 
