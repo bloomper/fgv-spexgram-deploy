@@ -1,0 +1,115 @@
+# spexgram-media: serves Immich's thumbnails, previews, originals and videos from signed, expiring addresses, without
+# asking the API for every request. The API signs  /a/<assetId>/<variant>/<expires>/<signature>  with
+# signature = base64url(md5("<expires><assetId>/<variant> <API_MEDIA_SIGNING_KEY>")), so one signature covers one
+# variant of one asset until it expires. Requests go on to Immich on the internal network with the media server's own
+# API key (asset.read, asset.view and asset.download only), which the API creates and leaves in the shared keys folder.
+# Thumbnails and previews are cached here; originals and videos are streamed with byte ranges.
+
+log_format media '$remote_addr [$time_local] "$request_method /a/$asset_id/$variant" $status $body_bytes_sent "$http_user_agent"';
+
+proxy_cache_path /var/cache/nginx/spexgram levels=1:2 keys_zone=spexgram:10m max_size=${MEDIA_CACHE_SIZE} inactive=30d use_temp_path=off;
+
+# Immich's endpoint for each variant
+map $variant $immich_path {
+    thumbnail "/api/assets/$asset_id/thumbnail?size=thumbnail";
+    preview   "/api/assets/$asset_id/thumbnail?size=preview";
+    original  "/api/assets/$asset_id/original";
+    video     "/api/assets/$asset_id/video/playback";
+}
+
+map $variant $media_cache {
+    thumbnail spexgram;
+    preview   spexgram;
+    default   off;
+}
+
+map $uri $asset_id {
+    "~^/a/(?<a>[0-9a-f-]{36})/" $a;
+    default -;
+}
+
+map $uri $variant {
+    "~^/a/[0-9a-f-]{36}/(?<v>thumbnail|preview|original|video)/" $v;
+    default -;
+}
+
+upstream immich {
+    server ${IMMICH_HOST};
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    server_tokens off;
+    autoindex off;
+    # The signature is left out of the log
+    access_log /var/log/nginx/access.log media;
+
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location ~ "^/a/[0-9a-f-]{36}/(?:thumbnail|preview|original|video)/(?<expires>\d+)/(?<signature>[A-Za-z0-9_-]+)$" {
+        limit_except GET HEAD OPTIONS {
+            deny all;
+        }
+
+        secure_link $signature,$expires;
+        secure_link_md5 "$expires$asset_id/$variant ${API_MEDIA_SIGNING_KEY}";
+
+        if ($secure_link = "") {
+            return 403;
+        }
+        if ($secure_link = "0") {
+            return 410;
+        }
+
+        add_header Access-Control-Allow-Origin "${SPEXGRAM_WEB_ORIGIN}" always;
+        add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Range" always;
+        add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Content-Disposition" always;
+        add_header Cache-Control "private, max-age=3600" always;
+        add_header X-Content-Type-Options nosniff always;
+
+        if ($request_method = OPTIONS) {
+            return 204;
+        }
+
+        proxy_pass http://immich$immich_path;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $proxy_host;
+        proxy_set_header x-api-key "${IMMICH_MEDIA_API_KEY}";
+        # Only what Immich needs: no cookies or other headers from the browser reach it
+        proxy_pass_request_headers off;
+        proxy_set_header Range $http_range;
+        proxy_set_header If-Range $http_if_range;
+        proxy_set_header Accept $http_accept;
+        proxy_hide_header Set-Cookie;
+        proxy_hide_header Cache-Control;
+        proxy_hide_header Content-Security-Policy;
+        proxy_ignore_headers Set-Cookie Cache-Control Expires;
+        proxy_intercept_errors on;
+        # Immich answers 400 or 404 for an asset it does not have; 403 stays for a bad signature
+        error_page 400 404 = @missing;
+
+        proxy_cache $media_cache;
+        proxy_cache_key "$asset_id/$variant";
+        proxy_cache_valid 200 30d;
+        proxy_cache_lock on;
+        # Videos and originals stream as they come, with Immich's byte ranges
+        proxy_buffering on;
+        proxy_max_temp_file_size 0;
+    }
+
+    # Immich does not have the file, or not yet; the address itself was valid
+    location @missing {
+        add_header Access-Control-Allow-Origin "${SPEXGRAM_WEB_ORIGIN}" always;
+        return 404;
+    }
+
+    location / {
+        return 404;
+    }
+}
