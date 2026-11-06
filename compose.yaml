@@ -1,0 +1,314 @@
+name: fgv-spexgram-${DEPLOY_ENV:?DEPLOY_ENV must be set in .env}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+x-immich-environment: &immich-environment
+  DB_HOSTNAME: immich-postgres
+  DB_USERNAME: immich
+  DB_DATABASE_NAME: immich
+  REDIS_HOSTNAME: immich-valkey
+  TZ: Europe/Stockholm
+
+services:
+  spexgram-mysql:
+    image: ${MYSQL_IMAGE:-mysql:8.4}
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/MYSQL_ROOT_PASSWORD
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD_FILE: /run/secrets/MYSQL_USER_PASSWORD
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - default
+    secrets:
+      - MYSQL_ROOT_PASSWORD
+      - MYSQL_USER_PASSWORD
+
+  # GraphQL, uploads and zips. On the shared network for Keycloak, Spexregister and the web; on the internal one for
+  # Immich, which it sets up at start and writes the media server's API key for
+  spexgram-api:
+    image: ${API_IMAGE:?API_IMAGE must be set in .env}
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://spexgram-mysql/${MYSQL_DATABASE}
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER}
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak-server:8080/auth/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: https://${KEYCLOAK_HOST}/auth/realms/${KEYCLOAK_REALM}
+      SPRING_PROFILES_ACTIVE: ${DEPLOY_ENV}
+      SPRING_MAIL_HOST: ${SMTP_HOST}
+      SPRING_MAIL_PORT: ${SMTP_PORT}
+      SPRING_MAIL_USERNAME: ${SMTP_USER:-}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: ${SMTP_AUTH:-false}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${SMTP_STARTTLS:-false}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_SSL_ENABLE: ${SMTP_SSL:-false}
+      MAIL_FROM: ${MAIL_FROM}
+      LOGGING_FILE_PATH: /data/log_data
+      API_WEB_URL: https://${WEB_HOST}
+      API_KEYCLOAK_URL: http://keycloak-server:8080/auth
+      API_KEYCLOAK_REALM: ${KEYCLOAK_REALM}
+      API_KEYCLOAK_ADMIN_CLIENT_ID: fgv-admin
+      API_MEDIA_BASE_URL: https://${MEDIA_HOST}
+      API_UPLOADS_ROOT: /data/uploads
+      API_MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-4GB}
+      API_IMMICH_URL: http://immich-server:2283
+      API_IMMICH_KEYS_DIR: /data/immich-keys
+      API_IMMICH_CLIP_MODEL: ${IMMICH_CLIP_MODEL:-ViT-L-16-SigLIP2-256__webli}
+      API_SPEXREGISTER_GRAPHQL_URL: ${SPEXREGISTER_GRAPHQL_URL:-http://spexregister-api:8080/api/graphql}
+      API_IMPORT_SAMPLE_DATA: ${API_IMPORT_SAMPLE_DATA:-false}
+      API_SAMPLE_DATA_SIZE: ${API_SAMPLE_DATA_SIZE:-small}
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000;printf \"GET /actuator/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n\" >&3;grep -q \"^HTTP/1.1 200\" <&3" ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    depends_on:
+      spexgram-mysql:
+        condition: service_healthy
+      immich-server:
+        condition: service_healthy
+    volumes:
+      - ./data/api/log_data:/data/log_data
+      - ./data/uploads:/data/uploads
+      - ./data/immich-keys:/data/immich-keys
+    networks:
+      - default
+      - immich
+      - fgv
+    secrets:
+      - source: MYSQL_USER_PASSWORD
+        target: MYSQL_API_USER_PASSWORD
+      - source: KEYCLOAK_ADMIN_CLIENT_SECRET
+        target: API_KEYCLOAK_ADMIN_CLIENT_SECRET
+      - source: KEYCLOAK_SERVICE_CLIENT_SECRET
+        target: API_KEYCLOAK_SERVICE_CLIENT_SECRET
+      - API_MEDIA_SIGNING_KEY
+      - API_IMMICH_ADMIN_PASSWORD
+      - API_TURNSTILE_SECRET_KEY
+      - API_CLIENT_IP_SECRET
+      - SAMPLE_USER_PASSWORD
+      - SMTP_PASSWORD
+
+  spexgram-web:
+    image: ${WEB_IMAGE:?WEB_IMAGE must be set in .env}
+    command:
+      - sh
+      - -c
+      - |
+        export AUTH_SECRET=$$(cat /run/secrets/WEB_AUTH_SECRET)
+        export KEYCLOAK_CLIENT_SECRET=$$(cat /run/secrets/KEYCLOAK_CLIENT_SECRET)
+        export API_CLIENT_IP_SECRET=$$(cat /run/secrets/API_CLIENT_IP_SECRET)
+        exec node server.js
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      BETTER_AUTH_URL: https://${WEB_HOST}
+      KEYCLOAK_CLIENT_ID: fgv-spexgram
+      KEYCLOAK_ISSUER: https://${KEYCLOAK_HOST}/auth/realms/${KEYCLOAK_REALM}
+      API_GRAPHQL_ENDPOINT: http://spexgram-api:8080/api/graphql
+      API_ENDPOINT: http://spexgram-api:8080
+      MEDIA_ORIGIN: https://${MEDIA_HOST}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY}
+      SPEXREGISTER_WEB_URL: ${SPEXREGISTER_WEB_URL:-}
+      FGV_REVIVAL_WEB_URL: ${FGV_REVIVAL_WEB_URL:-}
+      SPEXIFY_WEB_URL: ${SPEXIFY_WEB_URL:-}
+      SPEXFLIX_WEB_URL: ${SPEXFLIX_WEB_URL:-}
+      ARCHIVE_WEB_URL: ${ARCHIVE_WEB_URL:-}
+      SUPPORTED_LOCALES: ${SUPPORTED_LOCALES:-sv,en}
+      DEFAULT_LOCALE: ${DEFAULT_LOCALE:-sv}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL}
+      FEEDBACK_EMAIL: ${FEEDBACK_EMAIL}
+      UMAMI_URL: http://umami-server:3000
+      UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: [ "CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3000/api/auth/ok" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      spexgram-api:
+        condition: service_healthy
+    networks:
+      - default
+      - fgv
+    secrets:
+      - WEB_AUTH_SECRET
+      - KEYCLOAK_CLIENT_SECRET
+      - API_CLIENT_IP_SECRET
+
+  # Serves Immich's thumbnails, previews, originals and videos from signed addresses, with the read-only API key the API
+  # leaves in data/immich-keys; reached by the edge proxy (production) or the tailnet (staging) in fgv-infra-deploy
+  spexgram-media:
+    image: ${NGINX_IMAGE:-nginx:1.29-alpine}
+    command:
+      - sh
+      - -c
+      - |
+        # An empty key would let anyone sign addresses: refuse to start without one
+        [ -s /run/secrets/API_MEDIA_SIGNING_KEY ] || { echo "API_MEDIA_SIGNING_KEY is empty"; exit 1; }
+        while [ ! -s /run/immich-keys/media.key ]; do echo "waiting for spexgram-api to create media.key"; sleep 5; done
+        export API_MEDIA_SIGNING_KEY=$$(cat /run/secrets/API_MEDIA_SIGNING_KEY)
+        export IMMICH_MEDIA_API_KEY=$$(cat /run/immich-keys/media.key)
+        exec /docker-entrypoint.sh nginx -g 'daemon off;'
+    environment:
+      SPEXGRAM_WEB_ORIGIN: https://${WEB_HOST}
+      IMMICH_HOST: immich-server:2283
+      MEDIA_CACHE_SIZE: ${MEDIA_CACHE_SIZE:-10g}
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: [ "CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1/healthz" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    depends_on:
+      immich-server:
+        condition: service_healthy
+    volumes:
+      - ./media/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./data/immich-keys:/run/immich-keys:ro
+      - media_cache:/var/cache/nginx
+    networks:
+      - immich
+      - fgv
+    secrets:
+      - API_MEDIA_SIGNING_KEY
+
+  # Immich, pinned: upgrade only after fgv-spexgram-server's integration tests ran against the new version.
+  # Its web interface and API are on the internal network only; admins reach them through an SSH tunnel
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v3.3.6}
+    environment:
+      <<: *immich-environment
+      DB_PASSWORD_FILE: /run/secrets/IMMICH_DB_PASSWORD
+      IMMICH_MACHINE_LEARNING_URL: http://immich-machine-learning:3003
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      disable: false
+    depends_on:
+      immich-postgres:
+        condition: service_healthy
+      immich-valkey:
+        condition: service_healthy
+    volumes:
+      - ./data/immich:/data
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - immich
+    secrets:
+      - IMMICH_DB_PASSWORD
+
+  # Search by content with the multilingual CLIP model, on the CPU at low concurrency so the host stays responsive
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-v3.3.6}
+    environment:
+      MACHINE_LEARNING_REQUEST_THREADS: 1
+      MACHINE_LEARNING_MODEL_INTRA_OP_THREADS: 2
+      MACHINE_LEARNING_MODEL_TTL: 600
+    cpus: ${IMMICH_ML_CPUS:-2}
+    mem_limit: ${IMMICH_ML_MEMORY:-4g}
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      disable: false
+    volumes:
+      - immich_model_cache:/cache
+    networks:
+      - immich
+
+  immich-postgres:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    environment:
+      POSTGRES_USER: immich
+      POSTGRES_DB: immich
+      POSTGRES_PASSWORD_FILE: /run/secrets/IMMICH_DB_PASSWORD
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    shm_size: 128mb
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U immich -d immich" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - immich_postgres_data:/var/lib/postgresql/data
+    networks:
+      - immich
+    secrets:
+      - IMMICH_DB_PASSWORD
+
+  immich-valkey:
+    image: docker.io/valkey/valkey:9@sha256:c123e3715db63d06d4ad6964884037aa0d5d4d703939b9929954112889708e1d
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: redis-cli ping | grep -q PONG || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - immich
+
+volumes:
+  mysql_data:
+  media_cache:
+  immich_postgres_data:
+  immich_model_cache:
+
+networks:
+  default:
+  # Immich and what talks to it; no route to the shared network
+  immich:
+    internal: true
+  fgv:
+    name: fgv-${DEPLOY_ENV}
+    external: true
+
+secrets:
+  MYSQL_ROOT_PASSWORD:
+    file: ./secrets/MYSQL_ROOT_PASSWORD
+  MYSQL_USER_PASSWORD:
+    file: ./secrets/MYSQL_USER_PASSWORD
+  KEYCLOAK_SERVICE_CLIENT_SECRET:
+    file: ./secrets/KEYCLOAK_SERVICE_CLIENT_SECRET
+  KEYCLOAK_ADMIN_CLIENT_SECRET:
+    file: ./secrets/KEYCLOAK_ADMIN_CLIENT_SECRET
+  KEYCLOAK_CLIENT_SECRET:
+    file: ./secrets/KEYCLOAK_CLIENT_SECRET
+  API_MEDIA_SIGNING_KEY:
+    file: ./secrets/API_MEDIA_SIGNING_KEY
+  API_IMMICH_ADMIN_PASSWORD:
+    file: ./secrets/API_IMMICH_ADMIN_PASSWORD
+  API_TURNSTILE_SECRET_KEY:
+    file: ./secrets/API_TURNSTILE_SECRET_KEY
+  API_CLIENT_IP_SECRET:
+    file: ./secrets/API_CLIENT_IP_SECRET
+  IMMICH_DB_PASSWORD:
+    file: ./secrets/IMMICH_DB_PASSWORD
+  SAMPLE_USER_PASSWORD:
+    file: ./secrets/SAMPLE_USER_PASSWORD
+  SMTP_PASSWORD:
+    file: ./secrets/SMTP_PASSWORD
+  WEB_AUTH_SECRET:
+    file: ./secrets/WEB_AUTH_SECRET
