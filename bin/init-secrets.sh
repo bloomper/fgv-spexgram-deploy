@@ -5,8 +5,8 @@ cd "$(dirname "$0")/.."
 umask 077
 mkdir -p secrets
 
-infra_deploy=${INFRA_DEPLOY:-../fgv-infra-deploy}
-spexregister_deploy=${SPEXREGISTER_DEPLOY:-../spexregister-deploy}
+infra_deploy=${INFRA_DEPLOY:-../../fgv-infra-deploy}
+spexregister_deploy=${SPEXREGISTER_DEPLOY:-../../spexregister-deploy}
 
 generate() {
   local name=$1 value=$2
@@ -69,6 +69,8 @@ else
   touch secrets/KEYCLOAK_ADMIN_CLIENT_SECRET secrets/SAMPLE_USER_PASSWORD
 fi
 generate WEB_AUTH_SECRET "$(random 48)"
+# Shared by the web and the API: the API trusts the visitor's address the web names only with it
+generate API_CLIENT_IP_SECRET "$(random 48)"
 if [[ ! -s secrets/cloudflared.env ]]; then
   printf 'TUNNEL_TOKEN=\n' > secrets/cloudflared.env
   echo "created secrets/cloudflared.env (staging only: paste the tunnel token into it)"

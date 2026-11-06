@@ -99,6 +99,7 @@ services:
       - API_MEDIA_SIGNING_KEY
       - API_IMMICH_ADMIN_PASSWORD
       - API_TURNSTILE_SECRET_KEY
+      - API_CLIENT_IP_SECRET
       - SAMPLE_USER_PASSWORD
       - SMTP_PASSWORD
 
@@ -110,6 +111,7 @@ services:
       - |
         export AUTH_SECRET=$$(cat /run/secrets/WEB_AUTH_SECRET)
         export KEYCLOAK_CLIENT_SECRET=$$(cat /run/secrets/KEYCLOAK_CLIENT_SECRET)
+        export API_CLIENT_IP_SECRET=$$(cat /run/secrets/API_CLIENT_IP_SECRET)
         exec node server.js
     environment:
       HOSTNAME: 0.0.0.0
@@ -149,6 +151,7 @@ services:
     secrets:
       - WEB_AUTH_SECRET
       - KEYCLOAK_CLIENT_SECRET
+      - API_CLIENT_IP_SECRET
 
   # Serves Immich's thumbnails, previews, originals and videos from signed addresses, with the read-only API key the API
   # leaves in data/immich-keys; reached by the edge proxy (production) or the tailnet (staging) in fgv-infra-deploy
@@ -299,6 +302,8 @@ secrets:
     file: ./secrets/API_IMMICH_ADMIN_PASSWORD
   API_TURNSTILE_SECRET_KEY:
     file: ./secrets/API_TURNSTILE_SECRET_KEY
+  API_CLIENT_IP_SECRET:
+    file: ./secrets/API_CLIENT_IP_SECRET
   IMMICH_DB_PASSWORD:
     file: ./secrets/IMMICH_DB_PASSWORD
   SAMPLE_USER_PASSWORD:

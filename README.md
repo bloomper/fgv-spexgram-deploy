@@ -11,7 +11,7 @@ Cloudflare and Tailscale are used on staging only. Production uses neither: its 
 ```
 Staging:
 Browser ──https──▶ Cloudflare ──tunnel──▶ cloudflared ──▶ spexgram-web:3000                         (WEB_HOST)
-                                                       └─▶ spexgram-api:8080, /docs only               (API_HOST, optional)
+                                                       └─▶ spexgram-api:8080                         (API_HOST)
 Browser ──https──▶ Tailscale Funnel ──▶ tailnet-spexgram-media (fgv-infra-deploy) ──▶ spexgram-media:80  (MEDIA_HOST)
 
 spexgram-web ──▶ spexgram-api ──▶ spexgram-mysql
@@ -23,9 +23,12 @@ spexgram-api ──▶ keycloak-server, spexregister-api, mailpit/SMTP      (fgv
 
 - The web goes through the Cloudflare Tunnel like Spexregister, and serves visitors without login too: what editors
   have made public. Uploads are tus chunks of at most 50 MB through the web, below the request limit of Cloudflare's
-  free plan. The web calls the API on the shared network. The API's public hostname, `API_HOST`, serves only its
-  documentation under `/docs`, like the other FGV applications' API hosts; everything else on it answers 404, because
-  the API trusts the client address the web passes on (visitor report limits).
+  free plan. The web calls the API on the shared network. The API's public hostname, `API_HOST`, serves the whole API
+  (GraphQL under `/api/graphql`, uploads) and its documentation under `/docs`, like the other FGV applications' API
+  hosts; it requires a Keycloak token for everything but the public side and `/docs`. The web names the visitor's
+  address to the API in `X-Client-IP`, for limiting visitors' reports, together with `API_CLIENT_IP_SECRET`, which
+  `bin/init-secrets.sh` generates for both; the API ignores an address named without it, so callers of `API_HOST`
+  can't pick their own.
 - Photos and videos don't go through Cloudflare, whose CDN terms restrict serving video on the free plans. They come from
   `spexgram-media`: nginx, which checks the signed, expiring address (`media/default.conf.template`, nginx
   `secure_link`) and passes the request to Immich's matching endpoint with a read-only API key. It caches thumbnails and
@@ -99,11 +102,11 @@ upload --recursive /import` with `IMMICH_INSTANCE_URL=http://immich-server:2283/
    its token.
 2. On the tunnel's **Routes** tab, add a published application for `WEB_HOST` with the service URL
    `http://spexgram-web:3000`.
-   Add a second published application for `API_HOST` with the path `^/docs(/.*)?$` and the service URL
-   `http://spexgram-api:8080`, and keep the tunnel's catch-all rule at `http_status:404`, so that nothing else of the
-   API is reachable.
-3. Don't restrict `WEB_HOST` with Cloudflare Access: Spexgram has a public side. Leave `API_HOST` open too: it serves
-   only the documentation.
+   Add a second published application for `API_HOST`, without a path, with the service URL
+   `http://spexgram-api:8080`.
+3. Don't restrict `WEB_HOST` with Cloudflare Access: Spexgram has a public side. Leave `API_HOST` open too: API
+   clients can't complete an Access login, and the API already requires a Keycloak token for everything but the
+   public side.
 4. Create a Turnstile widget for `WEB_HOST` for production (Turnstile → *Add widget*); staging uses Cloudflare's test
    keys, which always pass. Put the site key in `TURNSTILE_SITE_KEY` and the secret in
    `secrets/API_TURNSTILE_SECRET_KEY`.
@@ -115,7 +118,7 @@ git clone https://github.com/bloomper/fgv-spexgram-deploy.git
 cd fgv-spexgram-deploy
 
 cp staging.env.example .env          # set the hostnames
-bin/init-secrets.sh                  # copies the client secrets from ../fgv-infra-deploy
+bin/init-secrets.sh                  # copies the client secrets from ../../fgv-infra-deploy
 nano secrets/cloudflared.env         # staging only: TUNNEL_TOKEN=<token from step 2>
 mkdir -p data/api/log_data data/uploads data/immich-keys data/immich
 sudo chown -R 1000:1000 data/api data/uploads data/immich-keys
@@ -125,7 +128,7 @@ docker compose up -d
 | Variable                          | Purpose                                                                      |
 |-----------------------------------|------------------------------------------------------------------------------|
 | `WEB_HOST`                        | Spexgram's address                                                           |
-| `API_HOST`                        | Public address of the API, for `/docs` only                                  |
+| `API_HOST`                        | Public address of the API: GraphQL, uploads and `/docs`                      |
 | `MEDIA_HOST`                      | The media hostname: on staging the Funnel name of `tailnet-spexgram-media`   |
 | `KEYCLOAK_HOST`, `KEYCLOAK_REALM` | Keycloak's public address and realm                                          |
 | `IMMICH_VERSION`                  | The pinned Immich release                                                    |
@@ -181,9 +184,8 @@ deletes all Keycloak users on every start of its sample import, so restart Spexg
 - `.env` from `production.env.example`: `DEPLOY_ENV=production` (the API then refuses sample data),
   `API_IMPORT_SAMPLE_DATA=false`, and images pinned to release versions.
 - No Cloudflare: `COMPOSE_FILE` leaves out `compose.tunnel.yaml`. Production's own reverse proxy terminates TLS and
-  forwards `WEB_HOST` to `spexgram-web:3000` (tus chunks of up to 50 MB), `API_HOST` to `spexgram-api:8080` for
-  `GET /docs` and `/docs/*` only (404 for everything else), and `MEDIA_HOST` to `spexgram-media:80` (GET, HEAD and
-  OPTIONS only), as `fgv-infra-deploy`'s *Edge proxy* describes.
+  forwards `WEB_HOST` to `spexgram-web:3000` (tus chunks of up to 50 MB), `API_HOST` to `spexgram-api:8080` (tus
+  chunks of up to 50 MB) and `MEDIA_HOST` to `spexgram-media:80` (GET, HEAD and OPTIONS only), as `fgv-infra-deploy`'s *Edge proxy* describes.
 - `bin/backup-db.sh` and `bin/backup-media.sh` in cron, with `backups/` copied off the host.
 - Upgrading Immich: run `fgv-spexgram-server`'s integration tests against the new version first (its `IMMICH_VERSION`
   and the checked-in OpenAPI document), then change `IMMICH_VERSION` here.
