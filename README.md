@@ -10,14 +10,15 @@ Cloudflare and Tailscale are used on staging only. Production uses neither: its 
 
 ```
 Staging:
-Browser ──https──▶ Cloudflare ──tunnel──▶ cloudflared ──▶ spexgram-web:3000                         (WEB_HOST)
-                                                       └─▶ spexgram-api:8080                         (API_HOST)
+Browser ──https──▶ Cloudflare ──tunnel──▶ cloudflared ─┬─▶ spexgram-web:3000                        (WEB_HOST)
+                                                       └─▶ spexgram-api:8080                        (API_HOST)
 Browser ──https──▶ Tailscale Funnel ──▶ tailnet-spexgram-media (fgv-infra-deploy) ──▶ spexgram-media:80  (MEDIA_HOST)
 
 spexgram-web ──▶ spexgram-api ──▶ spexgram-mysql
                  spexgram-api ──x-api-key──▶ immich-server:2283        (internal network "immich" only)
 spexgram-media ──x-api-key (read only)──▶ immich-server:2283           (internal network "immich" only)
-immich-server ──▶ immich-machine-learning, immich-postgres, immich-valkey
+immich-server ──▶ immich-machine-learning, immich-postgres, immich-valkey  (internal network "immich-backend" only)
+immich-machine-learning ──▶ Hugging Face                              (network "immich-models": model downloads)
 spexgram-api ──▶ keycloak-server, spexregister-api, mailpit/SMTP      (fgv network)
 ```
 
@@ -25,10 +26,10 @@ spexgram-api ──▶ keycloak-server, spexregister-api, mailpit/SMTP      (fgv
   have made public. Uploads are tus chunks of at most 50 MB through the web, below the request limit of Cloudflare's
   free plan. The web calls the API on the shared network. The API's public hostname, `API_HOST`, serves the whole API
   (GraphQL under `/api/graphql`, uploads) and its documentation under `/docs`, like the other FGV applications' API
-  hosts; it requires a Keycloak token for everything but the public side and `/docs`. The web names the visitor's
-  address to the API in `X-Client-IP`, for limiting visitors' reports, together with `API_CLIENT_IP_SECRET`, which
-  `bin/init-secrets.sh` generates for both; the API ignores an address named without it, so callers of `API_HOST`
-  can't pick their own.
+  hosts, so that other applications can use it; it requires a Keycloak token for everything but the public side and
+  `/docs`. The web names the visitor's address to the API in `X-Client-IP`, for limiting visitors' reports, together
+  with `API_CLIENT_IP_SECRET`, which `bin/init-secrets.sh` generates for both; the API ignores an address named
+  without it, so callers of `API_HOST` can't pick their own.
 - Photos and videos don't go through Cloudflare, whose CDN terms restrict serving video on the free plans. They come from
   `spexgram-media`: nginx, which checks the signed, expiring address (`media/default.conf.template`, nginx
   `secure_link`) and passes the request to Immich's matching endpoint with a read-only API key. It caches thumbnails and
@@ -43,8 +44,12 @@ spexgram-api ──▶ keycloak-server, spexregister-api, mailpit/SMTP      (fgv
   can be played a video Immich has not transcoded. Transcoding costs CPU at upload time.
 - Neither the edge proxy (no `log` directive in fgv-infra-deploy's `edge/Caddyfile`, so no access log) nor the web
   logs media addresses; nginx's error log can show a request line when Immich fails.
-- Immich is pinned (`IMMICH_VERSION`) and on an internal network only. Its web interface is not exposed; admins reach it
-  through an SSH tunnel, e.g. `ssh -L 2283:<immich-server's address on the immich network>:2283 host`.
+- Immich is pinned (`IMMICH_VERSION`) and on internal networks only: `immich` (the server, reached by `spexgram-api`
+  and `spexgram-media`) and `immich-backend` (the server, PostgreSQL, Valkey and machine learning, which nothing else
+  reaches). No Immich container publishes a port. Only the machine learning container is also on `immich-models`, a
+  network with a route out, to download its models from Hugging Face; it publishes no port either. Immich's web
+  interface is not exposed; admins reach it through an SSH tunnel, e.g.
+  `ssh -L 2283:<immich-server's address on the immich network>:2283 host`.
 
 ## Files
 
@@ -68,12 +73,13 @@ spexgram-api ──▶ keycloak-server, spexregister-api, mailpit/SMTP      (fgv
 
 Immich makes an API key's secret itself and shows it only once, so the deployment cannot generate the keys. The API
 creates them when it starts (and again if they are missing, invalid or have other permissions), each with only the
-permissions it needs, and keeps them as files in `data/immich-keys/`:
+permissions it needs, and keeps them as files in `data/immich-keys/`, except `media.key`, which goes to
+`data/immich-media-key/` so that `spexgram-media` never sees the other keys:
 
 | File              | Permissions                                       | Used by                                   |
 |-------------------|---------------------------------------------------|-------------------------------------------|
 | `api.key`         | asset read, view, download, upload, update, delete; jobs; queues; server about and storage | `spexgram-api` |
-| `media.key`       | `asset.read`, `asset.view`, `asset.download`      | `spexgram-media`, which mounts the folder read-only and waits for the file at start |
+| `media.key`       | `asset.read`, `asset.view`, `asset.download`      | `spexgram-media`, which mounts only `data/immich-media-key/` read-only and waits for the file at start |
 | `bulk-import.key` | `asset.upload`                                    | Admins' bulk imports with Immich's command line tool (5.6 of the spec) |
 
 The API also creates Immich's admin, Spexgram's system user, with the password in `secrets/API_IMMICH_ADMIN_PASSWORD`,
@@ -94,22 +100,33 @@ upload --recursive /import` with `IMMICH_INSTANCE_URL=http://immich-server:2283/
   production's own reverse proxy.
 - `spexregister-deploy` running a `spexregister-server` release that lets `fgv-spexgram-service` use the `MEDIA` role.
 - Disk for the archive: a photo is 3–10 MB plus about 10 % for Immich's thumbnails and previews.
-- Memory for Immich's machine learning: a few GB for the multilingual search model (`IMMICH_ML_MEMORY`, `IMMICH_ML_CPUS`).
+- Memory for Immich's machine learning: a few GB for the multilingual search model (`IMMICH_ML_MEMORY`, `IMMICH_ML_CPUS`),
+  which it downloads from Hugging Face on first use and keeps in the volume `immich_model_cache`.
 
 ## 2. Cloudflare (staging only)
 
 1. Create a tunnel (Networking → Tunnels → *Create a tunnel* → Cloudflared), e.g. `fgv-spexgram-staging`, and copy
    its token.
-2. On the tunnel's **Routes** tab, add a published application for `WEB_HOST` with the service URL
-   `http://spexgram-web:3000`.
-   Add a second published application for `API_HOST`, without a path, with the service URL
-   `http://spexgram-api:8080`.
+2. On the tunnel's **Routes** tab, add a published application for each row below, without a path:
+
+   | Hostname     | Service URL                 |
+   |--------------|-----------------------------|
+   | `WEB_HOST`   | `http://spexgram-web:3000`  |
+   | `API_HOST`   | `http://spexgram-api:8080`  |
+
 3. Don't restrict `WEB_HOST` with Cloudflare Access: Spexgram has a public side. Leave `API_HOST` open too: API
    clients can't complete an Access login, and the API already requires a Keycloak token for everything but the
    public side.
-4. Create a Turnstile widget for `WEB_HOST` for production (Turnstile → *Add widget*); staging uses Cloudflare's test
-   keys, which always pass. Put the site key in `TURNSTILE_SITE_KEY` and the secret in
-   `secrets/API_TURNSTILE_SECRET_KEY`.
+
+`MEDIA_HOST` is not on Cloudflare: it is the Funnel name of `tailnet-spexgram-media`, e.g.
+`spexgram-media-staging.tail1234.ts.net` (see *Tailnet* in `fgv-infra-deploy`). Its addresses are signed and expire.
+
+## Turnstile
+
+Visitors' reports are checked with Cloudflare Turnstile, on production too (Turnstile needs no other Cloudflare
+service). Staging uses Cloudflare's test keys, which always pass. For production, create a widget for `WEB_HOST`
+(Turnstile → *Add widget*), put its site key in `TURNSTILE_SITE_KEY` and its secret in
+`secrets/API_TURNSTILE_SECRET_KEY`; without them visitors can't report.
 
 ## 3. Checkout and configuration
 
@@ -118,12 +135,15 @@ git clone https://github.com/bloomper/fgv-spexgram-deploy.git
 cd fgv-spexgram-deploy
 
 cp staging.env.example .env          # set the hostnames
-bin/init-secrets.sh                  # copies the client secrets from ../../fgv-infra-deploy
+bin/init-secrets.sh                  # copies the client secrets from ../fgv-infra-deploy
 nano secrets/cloudflared.env         # staging only: TUNNEL_TOKEN=<token from step 2>
-mkdir -p data/api/log_data data/uploads data/immich-keys data/immich
-sudo chown -R 1000:1000 data/api data/uploads data/immich-keys
+mkdir -p data/api/log_data data/uploads data/immich-keys data/immich-media-key data/immich
+sudo chown -R 1000:1000 data/api data/uploads data/immich-keys data/immich-media-key
 docker compose up -d
 ```
+
+`bin/init-secrets.sh` looks for `fgv-infra-deploy` and `spexregister-deploy` next to this checkout; set `INFRA_DEPLOY`
+and `SPEXREGISTER_DEPLOY` to their paths if they are checked out elsewhere.
 
 | Variable                          | Purpose                                                                      |
 |-----------------------------------|------------------------------------------------------------------------------|
@@ -134,6 +154,7 @@ docker compose up -d
 | `IMMICH_VERSION`                  | The pinned Immich release                                                    |
 | `IMMICH_CLIP_MODEL`               | The multilingual model for search by content                                 |
 | `IMMICH_ML_CPUS`, `IMMICH_ML_MEMORY` | Limits for Immich's machine learning                                      |
+| `IMMICH_SERVER_CPUS`              | CPUs Immich's server may use, mostly for transcoding videos                  |
 | `MAX_UPLOAD_SIZE`                 | The largest upload the deployment accepts; admins can lower it in the web    |
 | `MEDIA_CACHE_SIZE`                | The media server's cache of thumbnails and previews                          |
 | `SPEXREGISTER_GRAPHQL_URL`        | Spexregister's GraphQL endpoint on the shared network                        |
@@ -168,6 +189,7 @@ website `SPEXGRAM_NAME` for `SPEXGRAM_WEB_HOST`; put its ID in `UMAMI_WEBSITE_ID
 | `data/immich/thumbs/`, `data/immich/encoded-video/` | Thumbnails, previews, transcoded videos | No; Immich makes them again |
 | `data/immich/backups/`  | Immich's own nightly database dumps                          | Yes, `bin/backup-media.sh` |
 | `data/immich-keys/`     | Immich's API keys, created by the API                        | No; the API makes new ones |
+| `data/immich-media-key/` | `spexgram-media`'s read-only Immich key, created by the API | No; the API makes a new one |
 | `data/uploads/`         | Unfinished uploads to Spexgram, deleted after 24 hours       | No      |
 | `backups/`              | `bin/backup-db.sh`'s dumps of both databases                 | Copy off the host |
 
@@ -185,7 +207,9 @@ deletes all Keycloak users on every start of its sample import, so restart Spexg
   `API_IMPORT_SAMPLE_DATA=false`, and images pinned to release versions.
 - No Cloudflare: `COMPOSE_FILE` leaves out `compose.tunnel.yaml`. Production's own reverse proxy terminates TLS and
   forwards `WEB_HOST` to `spexgram-web:3000` (tus chunks of up to 50 MB), `API_HOST` to `spexgram-api:8080` (tus
-  chunks of up to 50 MB) and `MEDIA_HOST` to `spexgram-media:80` (GET, HEAD and OPTIONS only), as `fgv-infra-deploy`'s *Edge proxy* describes.
+  chunks of up to 50 MB) and `MEDIA_HOST` to `spexgram-media:80` (GET, HEAD and OPTIONS only), as
+  `fgv-infra-deploy`'s *Edge proxy* describes.
+- Turnstile's production keys (see *Turnstile*).
 - `bin/backup-db.sh` and `bin/backup-media.sh` in cron, with `backups/` copied off the host.
 - Upgrading Immich: run `fgv-spexgram-server`'s integration tests against the new version first (its `IMMICH_VERSION`
   and the checked-in OpenAPI document), then change `IMMICH_VERSION` here.
@@ -198,6 +222,7 @@ deletes all Keycloak users on every start of its sample import, so restart Spexg
 | `MEDIA_HOST` answers 410                          | The page has been open more than four hours; reloading it gets new addresses |
 | `MEDIA_HOST` answers 404 for a valid address      | Immich has not made the thumbnail yet, or `media.key` is stale: `docker compose restart spexgram-media` |
 | `spexgram-media` keeps logging "waiting for spexgram-api to create media.key" | The API cannot reach or set up Immich; see its log |
+| Search by content finds nothing                   | `immich-machine-learning` can't download its model (see its log): the host needs a route out to Hugging Face |
 | Items stay "processing"                           | Immich's queues are stuck; see *Immich* under *Admin* in the web            |
 | Visitors' reports fail                            | `API_TURNSTILE_SECRET_KEY` doesn't match `TURNSTILE_SITE_KEY`, or Cloudflare can't be reached |
 | Login fails with "Invalid parameter: redirect_uri" | `SPEXGRAM_WEB_HOST` in `fgv-infra-deploy` doesn't match `WEB_HOST`         |

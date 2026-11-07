@@ -6,6 +6,10 @@ x-logging: &logging
     max-size: 10m
     max-file: "5"
 
+# Keeps the processes from gaining privileges through setuid binaries
+x-security-opt: &security-opt
+  - no-new-privileges:true
+
 x-immich-environment: &immich-environment
   DB_HOSTNAME: immich-postgres
   DB_USERNAME: immich
@@ -64,12 +68,14 @@ services:
       API_MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-4GB}
       API_IMMICH_URL: http://immich-server:2283
       API_IMMICH_KEYS_DIR: /data/immich-keys
+      API_IMMICH_MEDIA_KEY_DIR: /data/immich-media-key
       API_IMMICH_CLIP_MODEL: ${IMMICH_CLIP_MODEL:-ViT-L-16-SigLIP2-256__webli}
       API_SPEXREGISTER_GRAPHQL_URL: ${SPEXREGISTER_GRAPHQL_URL:-http://spexregister-api:8080/api/graphql}
       API_IMPORT_SAMPLE_DATA: ${API_IMPORT_SAMPLE_DATA:-false}
       API_SAMPLE_DATA_SIZE: ${API_SAMPLE_DATA_SIZE:-small}
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       test: [ "CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000;printf \"GET /actuator/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n\" >&3;grep -q \"^HTTP/1.1 200\" <&3" ]
       interval: 10s
@@ -85,6 +91,7 @@ services:
       - ./data/api/log_data:/data/log_data
       - ./data/uploads:/data/uploads
       - ./data/immich-keys:/data/immich-keys
+      - ./data/immich-media-key:/data/immich-media-key
     networks:
       - default
       - immich
@@ -136,6 +143,7 @@ services:
       UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       test: [ "CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3000/api/auth/ok" ]
       interval: 10s
@@ -154,7 +162,7 @@ services:
       - API_CLIENT_IP_SECRET
 
   # Serves Immich's thumbnails, previews, originals and videos from signed addresses, with the read-only API key the API
-  # leaves in data/immich-keys; reached by the edge proxy (production) or the tailnet (staging) in fgv-infra-deploy
+  # leaves in data/immich-media-key (never the API's own keys); reached by the edge proxy (production) or the tailnet (staging) in fgv-infra-deploy
   spexgram-media:
     image: ${NGINX_IMAGE:-nginx:1.29-alpine}
     command:
@@ -173,6 +181,7 @@ services:
       MEDIA_CACHE_SIZE: ${MEDIA_CACHE_SIZE:-10g}
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       test: [ "CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1/healthz" ]
       interval: 10s
@@ -184,7 +193,7 @@ services:
         condition: service_healthy
     volumes:
       - ./media/default.conf.template:/etc/nginx/templates/default.conf.template:ro
-      - ./data/immich-keys:/run/immich-keys:ro
+      - ./data/immich-media-key:/run/immich-keys:ro
       - media_cache:/var/cache/nginx
     networks:
       - immich
@@ -209,11 +218,14 @@ services:
         condition: service_healthy
       immich-valkey:
         condition: service_healthy
+    # Transcodes every video at upload; the limit keeps the host responsive
+    cpus: ${IMMICH_SERVER_CPUS:-2}
     volumes:
       - ./data/immich:/data
       - /etc/localtime:/etc/localtime:ro
     networks:
       - immich
+      - immich-backend
     secrets:
       - IMMICH_DB_PASSWORD
 
@@ -233,7 +245,8 @@ services:
     volumes:
       - immich_model_cache:/cache
     networks:
-      - immich
+      - immich-backend
+      - immich-models
 
   immich-postgres:
     image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
@@ -254,7 +267,7 @@ services:
     volumes:
       - immich_postgres_data:/var/lib/postgresql/data
     networks:
-      - immich
+      - immich-backend
     secrets:
       - IMMICH_DB_PASSWORD
 
@@ -268,7 +281,7 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - immich
+      - immich-backend
 
 volumes:
   mysql_data:
@@ -278,9 +291,15 @@ volumes:
 
 networks:
   default:
-  # Immich and what talks to it; no route to the shared network
+  # Immich's server and what talks to it (the API and the media server); no route out
   immich:
     internal: true
+  # Immich's server, database, Valkey and machine learning, which nothing else may reach; no route out
+  immich-backend:
+    internal: true
+  # Only for the machine learning container, which downloads its models from Hugging Face on first use. Publishes no
+  # ports, so nothing outside reaches it
+  immich-models:
   fgv:
     name: fgv-${DEPLOY_ENV}
     external: true
