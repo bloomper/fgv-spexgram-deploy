@@ -165,7 +165,7 @@ services:
   # Serves Immich's thumbnails, previews, originals and videos from signed addresses, with the read-only API key the API
   # leaves in data/immich-media-key (never the API's own keys); reached by the edge proxy (production) or the tailnet (staging) in fgv-infra-deploy
   spexgram-media:
-    image: ${NGINX_IMAGE:-nginx:1.29-alpine}
+    image: ${NGINX_IMAGE:-nginx:1.30-alpine}
     command:
       - sh
       - -c
@@ -205,7 +205,7 @@ services:
   # Immich, pinned: upgrade only after fgv-spexgram-server's integration tests ran against the new version.
   # Its web interface and API are on the internal network only; admins reach them through an SSH tunnel
   immich-server:
-    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v3.3.6}
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v3.4.1}
     environment:
       <<: *immich-environment
       DB_PASSWORD_FILE: /run/secrets/IMMICH_DB_PASSWORD
@@ -232,7 +232,7 @@ services:
 
   # Search by content with the multilingual CLIP model, on the CPU at low concurrency so the host stays responsive
   immich-machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-v3.3.6}
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-v3.4.1}
     environment:
       MACHINE_LEARNING_REQUEST_THREADS: 1
       MACHINE_LEARNING_MODEL_INTRA_OP_THREADS: 2
@@ -273,7 +273,7 @@ services:
       - IMMICH_DB_PASSWORD
 
   immich-valkey:
-    image: docker.io/valkey/valkey:9@sha256:c123e3715db63d06d4ad6964884037aa0d5d4d703939b9929954112889708e1d
+    image: docker.io/valkey/valkey:9@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
     restart: unless-stopped
     logging: *logging
     healthcheck:
