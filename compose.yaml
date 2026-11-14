@@ -27,6 +27,7 @@ services:
       MYSQL_PASSWORD_FILE: /run/secrets/MYSQL_USER_PASSWORD
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       test: [ "CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent" ]
       interval: 10s
@@ -212,6 +213,7 @@ services:
       IMMICH_MACHINE_LEARNING_URL: http://immich-machine-learning:3003
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       disable: false
     depends_on:
@@ -241,6 +243,7 @@ services:
     mem_limit: ${IMMICH_ML_MEMORY:-4g}
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       disable: false
     volumes:
@@ -259,6 +262,7 @@ services:
     shm_size: 128mb
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U immich -d immich" ]
       interval: 10s
@@ -276,6 +280,7 @@ services:
     image: docker.io/valkey/valkey:9@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       test: redis-cli ping | grep -q PONG || exit 1
       interval: 10s
