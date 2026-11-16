@@ -61,6 +61,8 @@ services:
       MAIL_FROM: ${MAIL_FROM}
       LOGGING_FILE_PATH: /data/log_data
       API_WEB_URL: https://${WEB_HOST}
+      # The MCP endpoint names itself https://API_HOST/api/mcp, the audience of fgv-spexgram-mcp's tokens
+      API_BASE_URL: https://${API_HOST:?API_HOST must be set in .env}
       API_KEYCLOAK_URL: http://keycloak-server:8080/auth
       API_KEYCLOAK_REALM: ${KEYCLOAK_REALM}
       API_MEDIA_BASE_URL: https://${MEDIA_HOST}
