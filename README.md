@@ -162,7 +162,7 @@ grouped per application; set `INFRA_DEPLOY` to its path if it is elsewhere.
 | `MAX_UPLOAD_SIZE`                 | The largest upload the deployment accepts; admins can lower it in the web    |
 | `MEDIA_CACHE_SIZE`                | The media server's cache of thumbnails and previews                          |
 | `SPEXIPEDIA_GRAPHQL_URL`          | Spexipedia's GraphQL endpoint on the shared network: spex and the change feed |
-| `SPEXREGISTER_WEB_URL`, `FGV_REVIVAL_WEB_URL`, `SPEXIFY_WEB_URL`, `SPEXFLIX_WEB_URL`, `SPEXIPEDIA_WEB_URL`, `ARCHIVE_WEB_URL` | The other applications, for links and the application switcher |
+| `SPEXREGISTER_WEB_URL`, `REVIVAL_WEB_URL`, `SPEXIFY_WEB_URL`, `SPEXFLIX_WEB_URL`, `SPEXIPEDIA_WEB_URL`, `ARCHIVE_WEB_URL` | The other applications, for links and the application switcher |
 | `TURNSTILE_SITE_KEY`              | Cloudflare Turnstile's site key, for visitors' reports (`NEXT_PUBLIC_TURNSTILE_SITE_KEY` in the web) |
 | `SMTP_*`, `MAIL_FROM`             | The mail server for notifications to editors, reporters and contributors     |
 | `API_IMPORT_SAMPLE_DATA`          | `true` on staging only: replaces all data, Immich's assets included, at every start |
