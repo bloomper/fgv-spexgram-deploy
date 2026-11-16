@@ -146,8 +146,8 @@ sudo chown -R 1000:1000 data/api data/uploads data/immich-keys data/immich-media
 docker compose up -d
 ```
 
-`bin/init-secrets.sh` looks for `fgv-infra-deploy` next to this checkout; set `INFRA_DEPLOY` to its path if it is
-checked out elsewhere.
+`bin/init-secrets.sh` looks for `fgv-infra-deploy` next to this checkout, or one level further up when the repos are
+grouped per application; set `INFRA_DEPLOY` to its path if it is elsewhere.
 
 | Variable                          | Purpose                                                                      |
 |-----------------------------------|------------------------------------------------------------------------------|
