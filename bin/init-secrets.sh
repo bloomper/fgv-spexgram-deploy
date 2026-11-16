@@ -7,7 +7,6 @@ mkdir -p secrets
 
 # Checked out next to this repository, like the other deploy repositories; override for other layouts
 infra_deploy=${INFRA_DEPLOY:-../fgv-infra-deploy}
-spexregister_deploy=${SPEXREGISTER_DEPLOY:-../spexregister-deploy}
 
 generate() {
   local name=$1 value=$2
@@ -54,20 +53,6 @@ copy_client_secret KEYCLOAK_SERVICE_CLIENT_SECRET fgv-spexgram-service
 if [[ ! -e secrets/SMTP_PASSWORD ]]; then
   touch secrets/SMTP_PASSWORD
   echo "created secrets/SMTP_PASSWORD empty: put the mail server's password in it when SMTP_AUTH=true"
-fi
-# Only the sample data import manages Keycloak users, so the API gets fgv-admin's secret only when it imports
-if grep -qx 'API_IMPORT_SAMPLE_DATA=true' .env 2>/dev/null; then
-  copy_client_secret KEYCLOAK_ADMIN_CLIENT_SECRET fgv-admin
-  if [[ -s secrets/SAMPLE_USER_PASSWORD ]]; then
-    echo "keep secrets/SAMPLE_USER_PASSWORD"
-  elif [[ -s $spexregister_deploy/secrets/SAMPLE_USER_PASSWORD ]]; then
-    cp "$spexregister_deploy/secrets/SAMPLE_USER_PASSWORD" secrets/SAMPLE_USER_PASSWORD
-    echo "copied secrets/SAMPLE_USER_PASSWORD from $spexregister_deploy"
-  else
-    echo "missing secrets/SAMPLE_USER_PASSWORD: run bin/init-secrets.sh in spexregister-deploy first, or set SPEXREGISTER_DEPLOY" >&2
-  fi
-else
-  touch secrets/KEYCLOAK_ADMIN_CLIENT_SECRET secrets/SAMPLE_USER_PASSWORD
 fi
 generate WEB_AUTH_SECRET "$(random 48)"
 # Shared by the web and the API: the API trusts the visitor's address the web names only with it

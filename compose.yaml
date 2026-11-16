@@ -63,7 +63,6 @@ services:
       API_WEB_URL: https://${WEB_HOST}
       API_KEYCLOAK_URL: http://keycloak-server:8080/auth
       API_KEYCLOAK_REALM: ${KEYCLOAK_REALM}
-      API_KEYCLOAK_ADMIN_CLIENT_ID: fgv-admin
       API_MEDIA_BASE_URL: https://${MEDIA_HOST}
       API_UPLOADS_ROOT: /data/uploads
       API_MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-4GB}
@@ -100,15 +99,12 @@ services:
     secrets:
       - source: MYSQL_USER_PASSWORD
         target: MYSQL_API_USER_PASSWORD
-      - source: KEYCLOAK_ADMIN_CLIENT_SECRET
-        target: API_KEYCLOAK_ADMIN_CLIENT_SECRET
       - source: KEYCLOAK_SERVICE_CLIENT_SECRET
         target: API_KEYCLOAK_SERVICE_CLIENT_SECRET
       - API_MEDIA_SIGNING_KEY
       - API_IMMICH_ADMIN_PASSWORD
       - API_TURNSTILE_SECRET_KEY
       - API_CLIENT_IP_SECRET
-      - SAMPLE_USER_PASSWORD
       - SMTP_PASSWORD
 
   spexgram-web:
@@ -317,8 +313,6 @@ secrets:
     file: ./secrets/MYSQL_USER_PASSWORD
   KEYCLOAK_SERVICE_CLIENT_SECRET:
     file: ./secrets/KEYCLOAK_SERVICE_CLIENT_SECRET
-  KEYCLOAK_ADMIN_CLIENT_SECRET:
-    file: ./secrets/KEYCLOAK_ADMIN_CLIENT_SECRET
   KEYCLOAK_CLIENT_SECRET:
     file: ./secrets/KEYCLOAK_CLIENT_SECRET
   API_MEDIA_SIGNING_KEY:
@@ -331,8 +325,6 @@ secrets:
     file: ./secrets/API_CLIENT_IP_SECRET
   IMMICH_DB_PASSWORD:
     file: ./secrets/IMMICH_DB_PASSWORD
-  SAMPLE_USER_PASSWORD:
-    file: ./secrets/SAMPLE_USER_PASSWORD
   SMTP_PASSWORD:
     file: ./secrets/SMTP_PASSWORD
   WEB_AUTH_SECRET:

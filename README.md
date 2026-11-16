@@ -102,7 +102,7 @@ upload --recursive /import` with `IMMICH_INSTANCE_URL=http://immich-server:2283/
 - `fgv-spexipedia-deploy` running: Spexgram reads spex from Spexipedia and follows its change feed. Its sample data adds
   Spexgram as a recipient of change notices; in production an admin adds it under *Administration → Mottagare av
   ändringar* (`fgv-spexgram-service`, `http://spexgram-api:8080/api/sync/notify`).
-- `spexregister-deploy` running, for the sample data's users.
+- `fgv-infra-deploy`'s `bin/seed-users.sh` run, for the sample users and their roles.
 - Disk for the archive: a photo is 3–10 MB plus about 10 % for Immich's thumbnails and previews.
 - Memory for Immich's machine learning: a few GB for the multilingual search model (`IMMICH_ML_MEMORY`, `IMMICH_ML_CPUS`),
   which it downloads from Hugging Face on first use and keeps in the volume `immich_model_cache`.
@@ -146,8 +146,8 @@ sudo chown -R 1000:1000 data/api data/uploads data/immich-keys data/immich-media
 docker compose up -d
 ```
 
-`bin/init-secrets.sh` looks for `fgv-infra-deploy` and `spexregister-deploy` next to this checkout; set `INFRA_DEPLOY`
-and `SPEXREGISTER_DEPLOY` to their paths if they are checked out elsewhere.
+`bin/init-secrets.sh` looks for `fgv-infra-deploy` next to this checkout; set `INFRA_DEPLOY` to its path if it is
+checked out elsewhere.
 
 | Variable                          | Purpose                                                                      |
 |-----------------------------------|------------------------------------------------------------------------------|
@@ -178,7 +178,6 @@ and `SPEXREGISTER_DEPLOY` to their paths if they are checked out elsewhere.
 | `API_IMMICH_ADMIN_PASSWORD`       | Immich's admin, which the API creates; also for logging in to Immich's web interface through the SSH tunnel |
 | `API_TURNSTILE_SECRET_KEY`        | Cloudflare Turnstile's secret                                                |
 | `KEYCLOAK_CLIENT_SECRET`, `KEYCLOAK_SERVICE_CLIENT_SECRET` | `fgv-spexgram` (the web) and `fgv-spexgram-service` (Spexregister, editors' email addresses) |
-| `KEYCLOAK_ADMIN_CLIENT_SECRET`, `SAMPLE_USER_PASSWORD` | Only with sample data: `fgv-admin`, which grants the sample users roles |
 | `SMTP_PASSWORD`                   | The mail server's password, when `SMTP_AUTH=true`                            |
 | `WEB_AUTH_SECRET`                 | The web's session secret                                                     |
 
@@ -200,10 +199,10 @@ website `SPEXGRAM_NAME` for `SPEXGRAM_WEB_HOST`; put its ID in `UMAMI_WEBSITE_ID
 ## First start
 
 The API creates its tables and sets Immich up; on staging (`API_IMPORT_SAMPLE_DATA=true`) it then replaces all data
-with sample data built on Spexregister's sample spex, uploads the generated photos and videos to Immich and waits for
-them to be processed; see *Sample data* in `fgv-spexgram-server`'s getting started guide for the users. Spexregister
-deletes all Keycloak users on every start of its sample import, so restart Spexgram after it:
-`docker compose restart spexgram-api`.
+with sample data built on Spexipedia's sample spex, uploads the generated photos and videos to Immich and waits for
+them to be processed; see *Sample data* in `fgv-spexgram-server`'s getting started guide for the users, which are
+`fgv-infra-deploy`'s. The applications' sample imports don't depend on each other's, so they start in any order after
+Spexipedia.
 
 ## Production
 
