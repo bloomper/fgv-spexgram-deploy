@@ -27,6 +27,7 @@ services:
       MYSQL_PASSWORD_FILE: /run/secrets/MYSQL_USER_PASSWORD
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       test: [ "CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent" ]
       interval: 10s
@@ -60,9 +61,10 @@ services:
       MAIL_FROM: ${MAIL_FROM}
       LOGGING_FILE_PATH: /data/log_data
       API_WEB_URL: https://${WEB_HOST}
+      # The MCP endpoint names itself https://API_HOST/api/mcp, the audience of fgv-spexgram-mcp's tokens
+      API_BASE_URL: https://${API_HOST:?API_HOST must be set in .env}
       API_KEYCLOAK_URL: http://keycloak-server:8080/auth
       API_KEYCLOAK_REALM: ${KEYCLOAK_REALM}
-      API_KEYCLOAK_ADMIN_CLIENT_ID: fgv-admin
       API_MEDIA_BASE_URL: https://${MEDIA_HOST}
       API_UPLOADS_ROOT: /data/uploads
       API_MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-4GB}
@@ -70,7 +72,7 @@ services:
       API_IMMICH_KEYS_DIR: /data/immich-keys
       API_IMMICH_MEDIA_KEY_DIR: /data/immich-media-key
       API_IMMICH_CLIP_MODEL: ${IMMICH_CLIP_MODEL:-ViT-L-16-SigLIP2-256__webli}
-      API_SPEXREGISTER_GRAPHQL_URL: ${SPEXREGISTER_GRAPHQL_URL:-http://spexregister-api:8080/api/graphql}
+      API_SPEXIPEDIA_GRAPHQL_URL: ${SPEXIPEDIA_GRAPHQL_URL:-http://spexipedia-api:8080/api/graphql}
       API_IMPORT_SAMPLE_DATA: ${API_IMPORT_SAMPLE_DATA:-false}
       API_SAMPLE_DATA_SIZE: ${API_SAMPLE_DATA_SIZE:-small}
     restart: unless-stopped
@@ -99,15 +101,12 @@ services:
     secrets:
       - source: MYSQL_USER_PASSWORD
         target: MYSQL_API_USER_PASSWORD
-      - source: KEYCLOAK_ADMIN_CLIENT_SECRET
-        target: API_KEYCLOAK_ADMIN_CLIENT_SECRET
       - source: KEYCLOAK_SERVICE_CLIENT_SECRET
         target: API_KEYCLOAK_SERVICE_CLIENT_SECRET
       - API_MEDIA_SIGNING_KEY
       - API_IMMICH_ADMIN_PASSWORD
       - API_TURNSTILE_SECRET_KEY
       - API_CLIENT_IP_SECRET
-      - SAMPLE_USER_PASSWORD
       - SMTP_PASSWORD
 
   spexgram-web:
@@ -131,9 +130,10 @@ services:
       MEDIA_ORIGIN: https://${MEDIA_HOST}
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY}
       SPEXREGISTER_WEB_URL: ${SPEXREGISTER_WEB_URL:-}
-      FGV_REVIVAL_WEB_URL: ${FGV_REVIVAL_WEB_URL:-}
+      REVIVAL_WEB_URL: ${REVIVAL_WEB_URL:-}
       SPEXIFY_WEB_URL: ${SPEXIFY_WEB_URL:-}
       SPEXFLIX_WEB_URL: ${SPEXFLIX_WEB_URL:-}
+      SPEXIPEDIA_WEB_URL: ${SPEXIPEDIA_WEB_URL:-}
       ARCHIVE_WEB_URL: ${ARCHIVE_WEB_URL:-}
       SUPPORTED_LOCALES: ${SUPPORTED_LOCALES:-sv,en}
       DEFAULT_LOCALE: ${DEFAULT_LOCALE:-sv}
@@ -164,7 +164,7 @@ services:
   # Serves Immich's thumbnails, previews, originals and videos from signed addresses, with the read-only API key the API
   # leaves in data/immich-media-key (never the API's own keys); reached by the edge proxy (production) or the tailnet (staging) in fgv-infra-deploy
   spexgram-media:
-    image: ${NGINX_IMAGE:-nginx:1.29-alpine}
+    image: ${NGINX_IMAGE:-nginx:1.30-alpine}
     command:
       - sh
       - -c
@@ -204,13 +204,14 @@ services:
   # Immich, pinned: upgrade only after fgv-spexgram-server's integration tests ran against the new version.
   # Its web interface and API are on the internal network only; admins reach them through an SSH tunnel
   immich-server:
-    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v3.3.6}
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v3.4.1}
     environment:
       <<: *immich-environment
       DB_PASSWORD_FILE: /run/secrets/IMMICH_DB_PASSWORD
       IMMICH_MACHINE_LEARNING_URL: http://immich-machine-learning:3003
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       disable: false
     depends_on:
@@ -231,7 +232,7 @@ services:
 
   # Search by content with the multilingual CLIP model, on the CPU at low concurrency so the host stays responsive
   immich-machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-v3.3.6}
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-v3.4.1}
     environment:
       MACHINE_LEARNING_REQUEST_THREADS: 1
       MACHINE_LEARNING_MODEL_INTRA_OP_THREADS: 2
@@ -240,6 +241,7 @@ services:
     mem_limit: ${IMMICH_ML_MEMORY:-4g}
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       disable: false
     volumes:
@@ -258,6 +260,7 @@ services:
     shm_size: 128mb
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U immich -d immich" ]
       interval: 10s
@@ -272,9 +275,10 @@ services:
       - IMMICH_DB_PASSWORD
 
   immich-valkey:
-    image: docker.io/valkey/valkey:9@sha256:c123e3715db63d06d4ad6964884037aa0d5d4d703939b9929954112889708e1d
+    image: docker.io/valkey/valkey:9@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
     restart: unless-stopped
     logging: *logging
+    security_opt: *security-opt
     healthcheck:
       test: redis-cli ping | grep -q PONG || exit 1
       interval: 10s
@@ -311,8 +315,6 @@ secrets:
     file: ./secrets/MYSQL_USER_PASSWORD
   KEYCLOAK_SERVICE_CLIENT_SECRET:
     file: ./secrets/KEYCLOAK_SERVICE_CLIENT_SECRET
-  KEYCLOAK_ADMIN_CLIENT_SECRET:
-    file: ./secrets/KEYCLOAK_ADMIN_CLIENT_SECRET
   KEYCLOAK_CLIENT_SECRET:
     file: ./secrets/KEYCLOAK_CLIENT_SECRET
   API_MEDIA_SIGNING_KEY:
@@ -325,8 +327,6 @@ secrets:
     file: ./secrets/API_CLIENT_IP_SECRET
   IMMICH_DB_PASSWORD:
     file: ./secrets/IMMICH_DB_PASSWORD
-  SAMPLE_USER_PASSWORD:
-    file: ./secrets/SAMPLE_USER_PASSWORD
   SMTP_PASSWORD:
     file: ./secrets/SMTP_PASSWORD
   WEB_AUTH_SECRET:
