@@ -141,7 +141,7 @@ cd fgv-spexgram-deploy
 cp staging.env.example .env          # set the hostnames
 bin/init-secrets.sh                  # copies the client secrets from ../fgv-infra-deploy
 nano secrets/cloudflared.env         # staging only: TUNNEL_TOKEN=<token from step 2>
-mkdir -p data/api/log_data data/uploads data/immich-keys data/immich-media-key data/immich
+mkdir -p data/api/log_data data/uploads data/immich-keys data/immich-media-key data/immich data/imports
 sudo chown -R 1000:1000 data/api data/uploads data/immich-keys data/immich-media-key
 docker compose up -d
 ```

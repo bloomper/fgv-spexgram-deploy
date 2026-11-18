@@ -67,6 +67,8 @@ services:
       API_KEYCLOAK_REALM: ${KEYCLOAK_REALM}
       API_MEDIA_BASE_URL: https://${MEDIA_HOST}
       API_UPLOADS_ROOT: /data/uploads
+      # The import API's files and, for Spexipedia, spex packages (up to 20 GB each)
+      API_IMPORTS_ROOT: /data/imports
       API_MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-4GB}
       API_IMMICH_URL: http://immich-server:2283
       API_IMMICH_KEYS_DIR: /data/immich-keys
@@ -92,6 +94,7 @@ services:
     volumes:
       - ./data/api/log_data:/data/log_data
       - ./data/uploads:/data/uploads
+      - ./data/imports:/data/imports
       - ./data/immich-keys:/data/immich-keys
       - ./data/immich-media-key:/data/immich-media-key
     networks:
